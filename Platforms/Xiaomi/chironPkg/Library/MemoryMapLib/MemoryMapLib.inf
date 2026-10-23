@@ -1,0 +1,21 @@
+##
+#  chiron's memory map
+##
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MemoryMapLib
+  FILE_GUID                      = 5C8E2A17-4D3B-4F92-8E61-2A7B9C0D5E38
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MemoryMapLib
+
+[LibraryClasses]
+  DebugLib
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+  chironPkg/chiron.dec
+
+[Sources]
+  MemoryMapLib.c

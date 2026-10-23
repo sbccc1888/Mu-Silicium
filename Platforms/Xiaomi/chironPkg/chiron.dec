@@ -1,0 +1,17 @@
+##
+#  Xiaomi Mi MIX 2 (chiron) -- Qualcomm MSM8998
+##
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = chironPkg
+  PACKAGE_GUID                   = 7A3C1E52-9B4D-4F18-A6C2-3E5D8F1B0A47
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include
+
+[Guids]
+
+[Protocols]
+
+[PcdsFixedAtBuild]
