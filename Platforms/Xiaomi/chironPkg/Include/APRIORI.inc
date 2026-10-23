@@ -1,11 +1,10 @@
 ##
-#  chiron: the order the firmware brings its drivers up.
+#  chiron: driver bring-up order.
 #
-#  Every line names an INF that exists under Binaries/chiron -- this list is
-#  filtered against that directory, so a driver this firmware does not carry
-#  is left out instead of stopping GenFds with "is not found in packages path".
-#  The .inf files in Binaries are package-relative (QcomPkg/Drivers/...); the
-#  path here says which package to resolve it from.
+#  Only entries whose exact path exists under Binaries/chiron are kept, so a
+#  driver this firmware does not carry is dropped instead of stopping GenFds
+#  with "is not found in packages path". The earlier version matched by
+#  basename, which kept EmbeddedMonotonicCounter at a path it does not have.
 ##
 APRIORI DXE {
   INF Binaries/chiron/MdeModulePkg/Core/Dxe/DxeMain.inf

@@ -12,8 +12,8 @@ requires_kernel_header = true
 # UEFI FD Configs
 #
 [uefi_fd]
-base = 0x9FD00000
-size = 0x200000
+base = 0x9FC00000
+size = 0x300000
 
 #
 # Android Boot Image Kernel Configs
@@ -25,8 +25,14 @@ append_dtb         = true
 #
 # Android Boot Image Configs
 #
-# header_version 2: msm8998's bootloader (2017) predates v4.
-# redwood (2022) uses 1; the 9707f sample uses 4. Neither fits a 2017 phone.
+# header_version = 1, the same as cheeseburger -- the OnePlus 5 on this very SoC.
+# That is the bootloader generation chiron has, and v1 takes the DTB appended to the
+# kernel (append_dtb above) instead of in its own header field.
+#
+# This was 2, taken from another device's comment rather than from a phone with
+# msm8998. At version > 1 mkbootimg requires a non-empty --dtb argument that
+# build_uefi.py never passes, so the build stopped at "DTB image must not be empty"
+# after the firmware itself had already built and verified.
 #
 [boot_image]
-header_version = 2
+header_version = 1

@@ -74,4 +74,9 @@
   #
   MemoryMapLib|chironPkg/Library/MemoryMapLib/MemoryMapLib.inf
 
+  #
+  # QCOM Libraries -- PlatformPeiLib consumes this before any device is up.
+  #
+  ConfigurationMapLib|chironPkg/Library/ConfigurationMapLib/ConfigurationMapLib.inf
+
 [Components]

@@ -11,9 +11,9 @@
 #  agree with Resources/Configs/chiron.toml and chiron.conf in the kernel repo.
 ##
 [Defines]
-  FD_BASE       = 0x9FD00000
-  FD_SIZE       = 0x00200000
-  FD_BLOCKS     = 0x200
+  FD_BASE       = 0x9FC00000
+  FD_SIZE       = 0x00300000
+  FD_BLOCKS     = 0x300
 
 [FD.SILICIUM_UEFI]
 BaseAddress   = $(FD_BASE)|gArmTokenSpaceGuid.PcdFdBaseAddress

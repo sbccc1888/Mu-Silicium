@@ -1,5 +1,5 @@
 ##
-#  chiron: drivers in the image, filtered the same way.
+#  chiron: drivers in the image (exact-path filtered, see APRIORI.inc).
 ##
   INF Binaries/chiron/MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
   INF Binaries/chiron/MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
@@ -12,7 +12,6 @@
   INF Binaries/chiron/MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
   INF Binaries/chiron/MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   INF Binaries/chiron/MdeModulePkg/Universal/FvSimpleFileSystemDxe/FvSimpleFileSystemDxe.inf
-  INF Binaries/chiron/EmbeddedPkg/EmbeddedMonotonicCounter/EmbeddedMonotonicCounter.inf
   INF Binaries/chiron/QcomPkg/Drivers/DiskIoDxe/DiskIoDxe.inf
   INF Binaries/chiron/QcomPkg/Drivers/PartitionDxe/PartitionDxe.inf
   INF Binaries/chiron/FatPkg/EnhancedFatDxe/Fat.inf
