@@ -452,9 +452,9 @@
   #
   # USB
   #
-  MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf
-  MdeModulePkg/Bus/Usb/UsbKbDxe/UsbKbDxe.inf
-  MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
+  # MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf    # CHIRON_NO_USB: not built, its console chatter buries the kernel log
+  # MdeModulePkg/Bus/Usb/UsbKbDxe/UsbKbDxe.inf    # CHIRON_NO_USB: not built, its console chatter buries the kernel log
+  # MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf    # CHIRON_NO_USB: not built, its console chatter buries the kernel log
 
   #
   # Graphics

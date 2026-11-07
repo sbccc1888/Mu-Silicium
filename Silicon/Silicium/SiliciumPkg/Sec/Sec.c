@@ -140,6 +140,24 @@ SecMain (VOID)
     return;
   }
 
+  // ---- CHIRON DIAGNOSTIC: list every FV and what is inside it ---------------
+  {
+    EFI_PEI_FV_HANDLE    V = NULL;
+    EFI_PEI_FILE_HANDLE  FH = NULL;
+    UINTN                VI = 0;
+    while (!EFI_ERROR (FfsFindNextVolume (VI++, &V)) && VI < 8) {
+      DEBUG ((EFI_D_ERROR, "FV%u at %p: ", VI - 1, V));
+      FH = NULL;
+      while (!EFI_ERROR (FfsFindNextFile (EFI_FV_FILETYPE_ALL, V, &FH))) {
+        EFI_FFS_FILE_HEADER *H = (EFI_FFS_FILE_HEADER *)FH;
+        DEBUG ((EFI_D_ERROR, "t%02x ", H->Type));
+      }
+      DEBUG ((EFI_D_ERROR, "\n"));
+    }
+    DEBUG ((EFI_D_ERROR, "FV census done, %u volumes\n", VI - 1));
+  }
+  // -------------------------------------------------------------------------
+
   // Load DXE Core
   Status = LoadDxeCoreFromFv (NULL, 0);
   if (EFI_ERROR (Status)) {

@@ -135,15 +135,4 @@
   # what UsbInitDxe's depex waits for, so it must come after it.  UsbInitDxe is
   # what calls UsbInitStartController() and makes the gadget visible.
   INF Binaries/chiron/QcomPkg/Drivers/UsbInitDxe/UsbInitDxe.inf
-  # CHIRON_EDK2_FASTBOOT_IN_THE_FV
   #
-  # Same two modules as the DSC, and the reason is the patch this is copied from
-  # (edk2-judypn/0001-judypn-usb-fastboot.patch):
-  #
-  #     INF EmbeddedPkg/Application/AndroidFastboot/AndroidFastbootApp.inf
-  #
-  # FastbootTransportUsbDxe publishes gAndroidFastbootTransportProtocolGuid on top of
-  # gUsbDeviceProtocolGuid, and AndroidFastbootApp consumes it.  Both are stock EDK2, so if they run
-  # here the fastboot server is the firmware's rather than the loader's.
-  INF EmbeddedPkg/Drivers/AndroidFastbootTransportUsbDxe/FastbootTransportUsbDxe.inf
-  INF EmbeddedPkg/Application/AndroidFastboot/AndroidFastbootApp.inf

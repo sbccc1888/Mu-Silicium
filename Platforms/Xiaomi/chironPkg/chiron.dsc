@@ -115,25 +115,6 @@
     Binaries/chiron/QcomPkg/Drivers/UsbConfigDxe/UsbConfigDxe.inf
     Binaries/chiron/QcomPkg/Drivers/UsbInitDxe/UsbInitDxe.inf
     #
-    # CHIRON_REGISTER_THE_STANDARD_FASTBOOT_APP
-    #
-    # Mi 6's EDK2 port does fastboot by registering EDK2's own application and letting the stock
-    # USB stack serve it (edk2-judypn/0001-judypn-usb-fastboot.patch):
-    #
-    #     [Components.common]
-    #       EmbeddedPkg/Application/AndroidFastboot/AndroidFastbootApp.inf
-    #
-    # and the matching INF line in the FV.  This firmware has never built it, so the only fastboot
-    # server here has been the loader's own -- which is why everything about USB lives in loader.c
-    # instead of in the stack that already knows how to do it.
-    #
-    # AndroidFastbootApp needs a transport; FastbootTransportUsbDxe publishes
-    # gAndroidFastbootTransportProtocolGuid on top of gUsbDeviceProtocolGuid, which is the protocol
-    # this firmware already produces.  Both are EDK2 modules, so the whole chain is generic.
-    #
-    EmbeddedPkg/Application/AndroidFastboot/AndroidFastbootApp.inf
-    EmbeddedPkg/Drivers/AndroidFastbootTransportUsbDxe/FastbootTransportUsbDxe.inf
-    #
     # OnePlus 5 build that was measured to work on MSM8998 (md5-identical files).
     #
     # UsbDeviceDxe is the one that installs gEfiUsbDeviceProtocolGuid.  The loader
