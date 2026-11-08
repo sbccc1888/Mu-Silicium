@@ -88,6 +88,13 @@ gMemoryDescriptor[] = {
   {"CRYPTO0 CRYPTO",    0x01DC0000,  0x00040000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
   {"TCSR_TCSR_REGS",    0x01FC0000,  0x00026000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
   {"TLMM CSR",          0x03400000,  0x00C00000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
+  /*
+   * The GPU's own register window and the SMMU. Both were missing, which matters: a read
+   * to an unmapped VA is a translation fault rather than a zero, so a probe that touches
+   * these addresses does not report nonsense, it faults.
+   */
+  {"GPU",               0x05000000,  0x00040000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
+  {"GPU_SMMU",          0x05040000,  0x00010000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
   {"GPMU_DRAM",         0x05026000,  0x00002000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
   {"GPMU_BLOCK0",       0x0502A000,  0x00002000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
   {"GPU_ISENSE",        0x05030000,  0x00002000,  AddDev,                MMAP_IO,  UNCACHEABLE,    MmIO,    NS_DEVICE},
