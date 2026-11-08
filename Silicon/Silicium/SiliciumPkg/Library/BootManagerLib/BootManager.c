@@ -296,6 +296,9 @@ ChironGpuRegisterProbe (
   UINT32  C;
   UINT32  D;
   UINT32  E;
+  UINT32  Poll;
+  UINT32  CxUp;
+  UINT32  GxUp;
 
   __asm__ volatile ("mrs %0, CurrentEL" : "=r" (El));
 
@@ -313,29 +316,65 @@ ChironGpuRegisterProbe (
    */
   GpuProbeLog ("stage 0: power up\n");
 
-  GpuProbeLog ("  0a: clear CX collapse\n");
+  /*
+   * 0a: CX domain. Clear SW_COLLAPSE (bit 0) and wait for PWR_ON (bit 31), the way
+   * drivers/clk/qcom/gdsc.c does it:
+   *
+   *   #define PWR_ON_MASK       BIT(31)
+   *   #define SW_COLLAPSE_MASK  BIT(0)
+   *   #define TIMEOUT_US        100
+   *
+   * The earlier version of this stage cleared SW_COLLAPSE and moved straight on to reading GPU
+   * registers, without ever checking that the domain had come up. gdsc_toggle_logic polls PWR_ON
+   * for up to 100 microseconds before giving up, and when a domain has a GDS hardware controller
+   * it waits 1 us first, because the status bit does not reflect the core for about eight XO
+   * cycles after the request.
+   *
+   * 100 us, not milliseconds: a domain that has not come up in 100 us is not going to.
+   */
+  GpuProbeLog ("  0a: CX clear collapse, wait PWR_ON\n");
   A = GpuRead32 (GPUCC_REG (0x01004));
   GpuWrite32 (GPUCC_REG (0x01004), A & ~1u);
+  gBS->Stall (1);
+  CxUp = 0;
+  for (Poll = 0; Poll < 100; Poll++) {
+    if ((GpuRead32 (GPUCC_REG (0x01004)) & 0x80000000u) != 0) {
+      CxUp = 1;
+      break;
+    }
+    gBS->Stall (1);
+  }
+  GpuProbeLog ("      CX PWR_ON=%u after %u us\n", CxUp, Poll + 1);
+  GpuProbeFlush ();
 
-  GpuProbeLog ("  0b: pulse GX block reset\n");
+  GpuProbeLog ("  0b: GX pulse block reset\n");
   GpuWrite32 (GPUCC_REG (0x01090), 1u);
   GpuWrite32 (GPUCC_REG (0x01090), 0u);
 
-  GpuProbeLog ("  0c: release GX domain reset and clamp\n");
+  GpuProbeLog ("  0c: GX release domain reset and clamp\n");
   B = GpuRead32 (GPUCC_REG (0x00130));
-  B &= ~(1u << 4);
-  B &= ~(1u << 0);
+  B &= ~((1u << 4) | (1u << 0));
   GpuWrite32 (GPUCC_REG (0x00130), B);
 
-  GpuProbeLog ("  0d: clear GX collapse\n");
+  GpuProbeLog ("  0d: GX clear collapse, wait PWR_ON\n");
   C = GpuRead32 (GPUCC_REG (0x01094));
   GpuWrite32 (GPUCC_REG (0x01094), C & ~1u);
+  gBS->Stall (1);
+  GxUp = 0;
+  for (Poll = 0; Poll < 100; Poll++) {
+    if ((GpuRead32 (GPUCC_REG (0x01094)) & 0x80000000u) != 0) {
+      GxUp = 1;
+      break;
+    }
+    gBS->Stall (1);
+  }
+  GpuProbeLog ("      GX PWR_ON=%u after %u us\n", GxUp, Poll + 1);
 
   GpuProbeLog ("  0e: enable gfx3d gate\n");
   D = GpuRead32 (GPUCC_REG (0x01098));
   GpuWrite32 (GPUCC_REG (0x01098), D | 1u);
 
-  GpuProbeLog ("  0f: power sequence done\n");
+  GpuProbeLog ("  0f: power sequence done (CX=%u GX=%u)\n", CxUp, GxUp);
   GpuProbeFlush ();
 
   /* ---- stage 1: GPUCC, the block that was always mapped ---- */
