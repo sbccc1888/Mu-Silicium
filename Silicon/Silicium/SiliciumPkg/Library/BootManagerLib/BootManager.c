@@ -24,6 +24,8 @@
 #include "BootManager.h"
 #include "XnuLoader.h"
 #include <Protocol/BlockIo.h>
+#include <Protocol/PartitionInfo.h>
+#include <Library/BaseLib.h>
 
 //
 // Global Variables
@@ -114,30 +116,31 @@ PostGopSetup (OUT EFI_GRAPHICS_OUTPUT_PROTOCOL **GopProtocol)
 STATIC
 EFI_STATUS
 GpuProbeFindLogPartition (
-  OUT EFI_BLOCK_IO_PROTOCOL  **OutBlockIo,
-  OUT UINT64                  *OutFirstLba
+  OUT EFI_BLOCK_IO_PROTOCOL  **OutBlockIo
   )
 {
-  EFI_STATUS                  Status;
-  EFI_HANDLE                 *Handles;
-  UINTN                       Count;
-  UINTN                       Index;
-  STATIC UINT8                Table[64 * 1024] __attribute__ ((aligned (8)));
-  STATIC UINT8                Header[4096] __attribute__ ((aligned (8)));
-  /*
-   * oops, not logfs. logfs is a FAT12 volume the phone's own UEFI owns, and writing raw at
-   * its LBA 0 would wreck the boot sector and the first FAT -- on every automatic run.
-   * "oops" is the raw 16 MiB panic-log area Android keeps for exactly this and never reads
-   * during a normal boot, which is why xnuloader falls back to it too.
-   */
-  CONST CHAR16                Want[] = L"oops";
+  EFI_STATUS                          Status;
+  EFI_HANDLE                         *Handles;
+  UINTN                               Count;
+  UINTN                               Index;
+  CONST CHAR16                        Want[] = L"oops";
+  EFI_PARTITION_INFO_PROTOCOL        *Info;
+  EFI_BLOCK_IO_PROTOCOL              *Bio;
 
+  /*
+   * Ask the firmware, do not re-derive the GPT. EFI_PARTITION_INFO_PROTOCOL is filled in
+   * from the table the firmware has already parsed, and the same handle gives up its block
+   * IO directly -- so no LBA is ever computed, and none can be computed wrong.
+   *
+   * This is the route xnuloader uses, and it is the better one: an earlier version of this
+   * function read LBA 1, checked for "EFI PART", walked the entry array and compared names
+   * by hand, which is four chances to be wrong that the protocol does not offer.
+   */
   *OutBlockIo = NULL;
-  *OutFirstLba = 0;
 
   Status = gBS->LocateHandleBuffer (
                   ByProtocol,
-                  &gEfiBlockIoProtocolGuid,
+                  &gEfiPartitionInfoProtocolGuid,
                   NULL,
                   &Count,
                   &Handles
@@ -147,78 +150,36 @@ GpuProbeFindLogPartition (
   }
 
   for (Index = 0; Index < Count; Index++) {
-    EFI_BLOCK_IO_PROTOCOL  *Bio;
-    UINT64                  BlockSize;
-    UINT64                  EntriesLba;
-    UINT64                  EntryCount;
-    UINT64                  EntrySize;
-    UINT64                  Bytes;
-    UINT64                  Read;
-    UINT32                  I;
-    UINT64                  E;
+    Status = gBS->HandleProtocol (Handles[Index], &gEfiPartitionInfoProtocolGuid, (VOID **)&Info);
+    if (EFI_ERROR (Status) || (Info == NULL) || (Info->Type != PARTITION_TYPE_GPT)) {
+      continue;
+    }
+
+    if (StrCmp (Info->Info.Gpt.PartitionName, Want) != 0) {
+      continue;
+    }
 
     Status = gBS->HandleProtocol (Handles[Index], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
-    if (EFI_ERROR (Status) || (Bio == NULL) || (Bio->Media == NULL) || Bio->Media->LogicalPartition) {
+    if (EFI_ERROR (Status) || (Bio == NULL) || (Bio->Media == NULL)) {
       continue;
     }
 
-    BlockSize = Bio->Media->BlockSize;
-    if ((BlockSize < 512) || (BlockSize > 4096)) {
+    /* A media with no usable sector size cannot be written to meaningfully. */
+    if ((Bio->Media->BlockSize == 0) || (Bio->Media->BlockSize > 4096)) {
       continue;
     }
 
-    Status = Bio->ReadBlocks (Bio, Bio->Media->MediaId, 1, BlockSize, Header);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    /* "EFI PART" -- a protective MBR sits at LBA 0, the GPT header at LBA 1. */
-    if ((Header[0] != 'E') || (Header[1] != 'F') || (Header[2] != 'I') || (Header[3] != ' ')) {
-      continue;
-    }
-
-    EntriesLba = *(UINT64 *)(Header + 72);
-    I          = *(UINT32 *)(Header + 80);
-    EntryCount = I;
-    I          = *(UINT32 *)(Header + 84);
-    EntrySize  = I;
-    Bytes      = EntryCount * EntrySize;
-    if ((EntrySize < 128) || (Bytes == 0) || (Bytes > sizeof (Table))) {
-      continue;
-    }
-
-    Read   = (Bytes + BlockSize - 1) / BlockSize * BlockSize;
-    Status = Bio->ReadBlocks (Bio, Bio->Media->MediaId, EntriesLba, Read, Table);
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-
-    for (E = 0; E < EntryCount; E++) {
-      CONST UINT8   *Entry = Table + E * EntrySize;
-      CONST CHAR16  *Name  = (CONST CHAR16 *)(Entry + 56);
-      UINTN          K;
-
-      for (K = 0; (K < 36) && (Want[K] != 0); K++) {
-        if (Name[K] != Want[K]) {
-          break;
-        }
-      }
-
-      if ((Want[K] == 0) && (Name[K] == 0)) {
-        *OutFirstLba = *(UINT64 *)(Entry + 32);
-        *OutBlockIo  = Bio;
-        FreePool (Handles);
-        return EFI_SUCCESS;
-      }
-    }
+    *OutBlockIo = Bio;
+    FreePool (Handles);
+    return EFI_SUCCESS;
   }
 
   FreePool (Handles);
 
   /*
    * No oops partition. logfs is the only other candidate and it is a live FAT12 volume; a
-   * raw write there damages firmware-owned data. Rather than do that quietly, report and
-   * write nothing -- a missing log is recoverable, a wrecked volume is not.
+   * raw write there damages firmware-owned data. Reporting and writing nothing is the right
+   * trade: a missing log is recoverable, a wrecked volume is not.
    */
   return EFI_NOT_FOUND;
 }
@@ -261,21 +222,23 @@ GpuProbeFlush (
   )
 {
   EFI_BLOCK_IO_PROTOCOL  *Bio;
-  UINT64                  FirstLba;
   EFI_STATUS              Status;
 
   if (mGpuProbeLogLen == 0) {
     return;
   }
 
-  Status = GpuProbeFindLogPartition (&Bio, &FirstLba);
+  Status = GpuProbeFindLogPartition (&Bio);
   if (EFI_ERROR (Status)) {
-    Print (L"GPU probe: no oops partition (logfs is FAT12 and is left alone), %r\n", Status);
     return;
   }
 
-  Status = Bio->WriteBlocks (Bio, Bio->Media->MediaId, FirstLba, sizeof (mGpuProbeLog), mGpuProbeLog);
-  Print (L"GPU probe: log written to oops LBA %lx, %r\n", FirstLba, Status);
+  /*
+   * Block 0 of the partition. The protocol gave us the partition's own block IO, so block 0
+   * is its first sector -- no LBA arithmetic, which is what the hand-rolled finder used to
+   * introduce.
+   */
+  Bio->WriteBlocks (Bio, Bio->Media->MediaId, 0, sizeof (mGpuProbeLog), mGpuProbeLog);
 }
 /*
  * CHIRON_GPU_REGISTER_PROBE
