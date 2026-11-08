@@ -320,14 +320,29 @@ ChironGpuRegisterProbe (
          GpuRead32 (0x0500007C));
   GpuProbeLog ("GPU_REVISION=%08x CHIP_ID=%08x PRODUCT_ID=%08x RBBM_STATUS=%08x\n");
 
-  /* Power: bit 0 of each GDSCR is SW_COLLAPSE, set meaning the domain is down. */
+  /*
+   * Power: bit 0 of each GDSCR is SW_COLLAPSE, set meaning the domain is down.
+   *
+   * These are in the GPUCC block at 0x05065000, not the GPU block at 0x05000000. The
+   * kernel's virt_base and virt_base_gfx look like one pointer per block, but both device
+   * nodes map the same address -- qcom,gpucc@5065000 and qcom,gfxcc@5065000 -- so an
+   * offset of 0x1004 lands at 0x05066004.
+   *
+   * Reading 0x05001004 instead would not fault: that address is inside the mapped GPU
+   * window and returns whatever is there. A wrong answer indistinguishable from a right
+   * one, which is the worst kind to debug.
+   */
   Print (L"CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
-         GpuRead32 (0x05001004), GpuRead32 (0x05001004) & 1u,
-         GpuRead32 (0x05001094), GpuRead32 (0x05001094) & 1u);
-  GpuProbeLog ("CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n");
+         GpuRead32 (0x05066004), GpuRead32 (0x05066004) & 1u,
+         GpuRead32 (0x05066094), GpuRead32 (0x05066094) & 1u);
+  GpuProbeLog ("CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
+              GpuRead32 (0x05066004), GpuRead32 (0x05066004) & 1u,
+              GpuRead32 (0x05066094), GpuRead32 (0x05066094) & 1u);
+  /* GX_BCR is in the same GPUCC block; GX_DOMAIN already was. */
   Print (L"GPU_GX_BCR=%08x GX_DOMAIN=%08x\n",
-         GpuRead32 (0x05001090), GpuRead32 (0x05065130));
-  GpuProbeLog ("GPU_GX_BCR=%08x GX_DOMAIN=%08x\n");
+         GpuRead32 (0x05066090), GpuRead32 (0x05065130));
+  GpuProbeLog ("GPU_GX_BCR=%08x GX_DOMAIN=%08x\n",
+              GpuRead32 (0x05066090), GpuRead32 (0x05065130));
 
   /* Clocks: bit 0 of a CBCR is the gate enable. */
   Print (L"GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n",
