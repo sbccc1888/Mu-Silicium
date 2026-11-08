@@ -285,14 +285,19 @@ GpuProbeFlush (
  * thing that can disagree with the phone.
  *
  * Read-only on purpose. Bringing the GPU up from here, while Android's kgsl may still hold
- * the block, is the kind of step that hangs with nothing to show for it.
+ * the block, is a step that hangs with nothing to show for it.
  *
- * Every offset is a word offset from a5xx_reg.h multiplied by four, and they were taken
- * from the set the kernel itself reads in adreno_a5xx.c around line 104 -- the function
- * that dumps device state once something has gone wrong -- rather than picked for looking
- * plausible. An earlier version of this probe read GPU_REVISION/CHIP_ID/PRODUCT_ID at
- * 0x05000000 and RBBM_STATUS at 0x7C. None of those are registers this part uses: the
- * kernel takes the GPU identity from the device tree, and RBBM_STATUS is word 0x4F5.
+ * Runs in five stages, each flushed to the oops partition before the next begins, so a run
+ * that stops still leaves behind how far it got. The stages are ordered by risk, not by
+ * tidiness: GPUCC was already in the UEFI memory map before this port touched anything, so
+ * it goes first, and the GPU block and SMMU -- the two windows that had to be added -- come
+ * after, where their failure cannot hide the values from the block that was always mapped.
+ *
+ * Every offset is a word offset from a5xx_reg.h multiplied by four. They come from the set
+ * the kernel reads in adreno_a5xx.c around line 104, the function that dumps device state
+ * once something has gone wrong, rather than from what looked plausible. An earlier version
+ * of this probe read GPU_REVISION/CHIP_ID/PRODUCT_ID at 0x05000000 and RBBM_STATUS at 0x7C;
+ * none of those are registers this part uses.
  */
 STATIC
 UINT32
@@ -313,133 +318,81 @@ ChironGpuRegisterProbe (
   )
 {
   UINT64  El;
-  UINT32  Status;
-  UINT32  Status3;
-  UINT32  Int0;
-  UINT32  HwFault;
-  UINT32  Cx;
-  UINT32  Gx;
-  UINT32  Bcr;
-  UINT32  Domain;
-  UINT32  Gate;
-  UINT32  Cxo;
-  UINT32  Rcgr;
-  UINT32  Sysreset;
-  UINT32  Gen0;
-  UINT32  Gen1;
-  UINT32  GpmuIntr;
-  UINT32  CpBase;
-  UINT32  CpCntl;
-  UINT32  CpRptr;
-  UINT32  CpWptr;
-  UINT32  MeCntl;
-  UINT32  SmmuSctlr;
-  UINT32  SmmuActlr;
-  UINT32  SmmuTtbr0;
-  UINT32  SmmuTtbcr;
+  UINT32  A;
+  UINT32  B;
+  UINT32  C;
+  UINT32  D;
+  UINT32  E;
 
   __asm__ volatile ("mrs %0, CurrentEL" : "=r" (El));
 
-  /*
-   * Read everything once into locals before printing. Interleaving reads with Print calls
-   * means a fault in the fourth read cannot be told apart from a hang in the third print.
-   */
-
-  GpuProbeLog ("probe: reading Status\n");  Status   = GpuRead32 (GPU_REG (0x4F5));
-
-  GpuProbeLog ("probe: reading Status3\n");  Status3  = GpuRead32 (GPU_REG (0x530));
-
-  GpuProbeLog ("probe: reading Int0\n");  Int0     = GpuRead32 (GPU_REG (0x4E1));
-
-  GpuProbeLog ("probe: reading HwFault\n");  HwFault  = GpuRead32 (GPU_REG (0xB1A));
-
-
-  GpuProbeLog ("probe: reading Cx\n");  Cx       = GpuRead32 (GPUCC_REG (0x01004));
-
-  GpuProbeLog ("probe: reading Gx\n");  Gx       = GpuRead32 (GPUCC_REG (0x01094));
-
-  GpuProbeLog ("probe: reading Bcr\n");  Bcr      = GpuRead32 (GPUCC_REG (0x01090));
-
-  GpuProbeLog ("probe: reading Domain\n");  Domain   = GpuRead32 (GPUCC_REG (0x00130));
-
-  GpuProbeLog ("probe: reading Gate\n");  Gate     = GpuRead32 (GPUCC_REG (0x01098));
-
-  GpuProbeLog ("probe: reading Cxo\n");  Cxo      = GpuRead32 (GPUCC_REG (0x01020));
-
-  GpuProbeLog ("probe: reading Rcgr\n");  Rcgr     = GpuRead32 (GPUCC_REG (0x01070));
-
-
-  GpuProbeLog ("probe: reading Sysreset\n");  Sysreset = GpuRead32 (GPU_REG (0xA8D8));
-
-  GpuProbeLog ("probe: reading Gen0\n");  Gen0     = GpuRead32 (GPU_REG (0xA8E0));
-
-  GpuProbeLog ("probe: reading Gen1\n");  Gen1     = GpuRead32 (GPU_REG (0xA8E1));
-
-  GpuProbeLog ("probe: reading GpmuIntr\n");  GpmuIntr = GpuRead32 (GPU_REG (0xA8D6));
-
-
-  GpuProbeLog ("probe: reading CpBase\n");  CpBase   = GpuRead32 (GPU_REG (0x800));
-
-  GpuProbeLog ("probe: reading CpCntl\n");  CpCntl   = GpuRead32 (GPU_REG (0x802));
-
-  GpuProbeLog ("probe: reading CpRptr\n");  CpRptr   = GpuRead32 (GPU_REG (0x806));
-
-  GpuProbeLog ("probe: reading CpWptr\n");  CpWptr   = GpuRead32 (GPU_REG (0x807));
-
-  GpuProbeLog ("probe: reading MeCntl\n");  MeCntl   = GpuRead32 (GPU_REG (0x832));
-
-  SmmuSctlr = GpuRead32 (0x05048000);
-  SmmuActlr = GpuRead32 (0x05048004);
-  SmmuTtbr0 = GpuRead32 (0x05048020);
-  SmmuTtbcr = GpuRead32 (0x05048030);
-
-  /*
-   * Write what was read before printing any of it. The panel path goes through the UEFI
-   * console, which blits the framebuffer and is the slowest thing here; if it faults
-   * there is still a complete file.
-   */
-  GpuProbeFlush ();
-
-  /* ---- now say it, on the panel and on disk ---- */
-  Print (L"==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
   GpuProbeLog ("==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
 
-  Print (L"RBBM_STATUS=%08x STATUS3=%08x INT_0=%08x CP_HW_FAULT=%08x\n",
-         Status, Status3, Int0, HwFault);
-  GpuProbeLog ("RBBM_STATUS=%08x STATUS3=%08x INT_0=%08x CP_HW_FAULT=%08x\n",
-               Status, Status3, Int0, HwFault);
-
-  Print (L"CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
-         Cx, Cx & 1u, Gx, Gx & 1u);
-  GpuProbeLog ("CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
-               Cx, Cx & 1u, Gx, Gx & 1u);
-
-  Print (L"GPU_GX_BCR=%08x GX_DOMAIN=%08x\n", Bcr, Domain);
-  GpuProbeLog ("GPU_GX_BCR=%08x GX_DOMAIN=%08x\n", Bcr, Domain);
-
-  Print (L"GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n",
-         Gate, Gate & 1u, Cxo, Rcgr);
-  GpuProbeLog ("GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n",
-               Gate, Gate & 1u, Cxo, Rcgr);
-
-  Print (L"GPMU_SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n",
-         Sysreset, Gen0, Gen1, GpmuIntr);
-  GpuProbeLog ("GPMU_SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n",
-               Sysreset, Gen0, Gen1, GpmuIntr);
-
-  Print (L"CP_RB_BASE=%08x CNTL=%08x RPTR=%08x WPTR=%08x ME_CNTL=%08x\n",
-         CpBase, CpCntl, CpRptr, CpWptr, MeCntl);
-  GpuProbeLog ("CP_RB_BASE=%08x CNTL=%08x RPTR=%08x WPTR=%08x ME_CNTL=%08x\n",
-               CpBase, CpCntl, CpRptr, CpWptr, MeCntl);
-
-  Print (L"SMMU_SCTLR=%08x (M %u) ACTLR=%08x (expect 70000000) TTBR0=%08x TTBCR=%08x\n",
-         SmmuSctlr, SmmuSctlr & 1u, SmmuActlr, SmmuTtbr0, SmmuTtbcr);
-  GpuProbeLog ("SMMU_SCTLR=%08x (M %u) ACTLR=%08x (expect 70000000) TTBR0=%08x TTBCR=%08x\n",
-               SmmuSctlr, SmmuSctlr & 1u, SmmuActlr, SmmuTtbr0, SmmuTtbcr);
-
-  Print (L"==== end of A540 GPU probe ====\n");
-  GpuProbeLog ("==== end of A540 GPU probe ====\n");
+  /* ---- stage 1: GPUCC, the block that was always mapped ---- */
+  GpuProbeLog ("stage 1: GPUCC\n");
+  A = GpuRead32 (GPUCC_REG (0x01004));   /* CX GDSCR  */
+  B = GpuRead32 (GPUCC_REG (0x01094));   /* GX GDSCR  */
+  C = GpuRead32 (GPUCC_REG (0x01090));   /* GX BCR    */
+  D = GpuRead32 (GPUCC_REG (0x00130));   /* GX domain */
+  E = GpuRead32 (GPUCC_REG (0x01098));   /* gfx3d gate */
+  GpuProbeLog ("  CX_GDSCR=%08x GX_GDSCR=%08x BCR=%08x DOMAIN=%08x GATE=%08x\n",
+               A, B, C, D, E);
+  A = GpuRead32 (GPUCC_REG (0x01020));   /* CXO gate  */
+  B = GpuRead32 (GPUCC_REG (0x01070));   /* gfx3d RCGR */
+  GpuProbeLog ("  CXO_CBCR=%08x GFX3D_RCGR=%08x\n", A, B);
   GpuProbeFlush ();
+
+  /* ---- stage 2: GPU status, the first read into the added window ---- */
+  GpuProbeLog ("stage 2: GPU block status\n");
+  A = GpuRead32 (GPU_REG (0x4F5));       /* RBBM_STATUS       */
+  B = GpuRead32 (GPU_REG (0x530));       /* RBBM_STATUS3      */
+  C = GpuRead32 (GPU_REG (0x4E1));       /* RBBM_INT_0_STATUS */
+  D = GpuRead32 (GPU_REG (0xB1A));       /* CP_HW_FAULT       */
+  GpuProbeLog ("  RBBM_STATUS=%08x STATUS3=%08x INT_0=%08x CP_HW_FAULT=%08x\n",
+               A, B, C, D);
+  GpuProbeFlush ();
+
+  /* ---- stage 3: GMU ---- */
+  GpuProbeLog ("stage 3: GMU\n");
+  A = GpuRead32 (GPU_REG (0xA8D8));      /* CM3_SYSRESET */
+  B = GpuRead32 (GPU_REG (0xA8E0));      /* GENERAL_0    */
+  C = GpuRead32 (GPU_REG (0xA8E1));      /* GENERAL_1    */
+  D = GpuRead32 (GPU_REG (0xA8D6));      /* RBBM_INTR    */
+  GpuProbeLog ("  SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n",
+               A, B, C, D);
+  GpuProbeLog ("  (GENERAL_0 == BABEFACE means the GMU firmware is running)\n");
+  GpuProbeFlush ();
+
+  /* ---- stage 4: CP ring ---- */
+  GpuProbeLog ("stage 4: CP ring\n");
+  A = GpuRead32 (GPU_REG (0x800));       /* RB_BASE  */
+  B = GpuRead32 (GPU_REG (0x802));       /* RB_CNTL  */
+  C = GpuRead32 (GPU_REG (0x806));       /* RB_RPTR  */
+  D = GpuRead32 (GPU_REG (0x807));       /* RB_WPTR  */
+  E = GpuRead32 (GPU_REG (0x832));       /* ME_CNTL  */
+  GpuProbeLog ("  RB_BASE=%08x CNTL=%08x RPTR=%08x WPTR=%08x ME_CNTL=%08x\n",
+               A, B, C, D, E);
+  GpuProbeFlush ();
+
+  /* ---- stage 5: SMMU context bank 0 ---- */
+  GpuProbeLog ("stage 5: SMMU\n");
+  A = GpuRead32 (0x05048000);            /* SCTLR */
+  B = GpuRead32 (0x05048004);            /* ACTLR */
+  C = GpuRead32 (0x05048020);            /* TTBR0 */
+  D = GpuRead32 (0x05048030);            /* TTBCR */
+  GpuProbeLog ("  SCTLR=%08x ACTLR=%08x TTBR0=%08x TTBCR=%08x\n", A, B, C, D);
+  GpuProbeLog ("  (ACTLR == 70000000 means qcom,smmu-v2, not a stock SMMU-500)\n");
+  GpuProbeFlush ();
+
+  GpuProbeLog ("==== end of A540 GPU probe: all five stages completed ====\n");
+  GpuProbeFlush ();
+
+  /*
+   * Only now, with everything already on disk, put it on the panel too. Print goes through
+   * the UEFI console, which blits the framebuffer -- the slowest and most fragile thing
+   * this function does, and no longer the only way the data can get out.
+   */
+  Print (L"GPU probe complete; log on the oops partition.\n");
 }
 
 VOID
