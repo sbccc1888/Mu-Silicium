@@ -276,6 +276,16 @@ GpuRead32 (
 
 STATIC
 VOID
+GpuWrite32 (
+  IN UINT64 Address,
+  IN UINT32 Value
+  )
+{
+  *(volatile UINT32 *)(UINTN)Address = Value;
+}
+
+STATIC
+VOID
 ChironGpuRegisterProbe (
   VOID
   )
@@ -290,6 +300,43 @@ ChironGpuRegisterProbe (
   __asm__ volatile ("mrs %0, CurrentEL" : "=r" (El));
 
   GpuProbeLog ("==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
+
+  /*
+   * stage 0: bring the GPUCC block up.
+   *
+   * Nothing in this firmware touches GPUCC or any GPU power domain -- the memory map declares
+   * the windows and that is all -- so by BDS the block is still collapsed the way XBL left it.
+   * A read against a collapsed domain is not defined: it may return zeros, ones, or not return.
+   *
+   * This is the only stage that writes, and it writes nothing but the power sequence. Each step
+   * is logged before it runs, so a hang names the write it hung on.
+   */
+  GpuProbeLog ("stage 0: power up\n");
+
+  GpuProbeLog ("  0a: clear CX collapse\n");
+  A = GpuRead32 (GPUCC_REG (0x01004));
+  GpuWrite32 (GPUCC_REG (0x01004), A & ~1u);
+
+  GpuProbeLog ("  0b: pulse GX block reset\n");
+  GpuWrite32 (GPUCC_REG (0x01090), 1u);
+  GpuWrite32 (GPUCC_REG (0x01090), 0u);
+
+  GpuProbeLog ("  0c: release GX domain reset and clamp\n");
+  B = GpuRead32 (GPUCC_REG (0x00130));
+  B &= ~(1u << 4);
+  B &= ~(1u << 0);
+  GpuWrite32 (GPUCC_REG (0x00130), B);
+
+  GpuProbeLog ("  0d: clear GX collapse\n");
+  C = GpuRead32 (GPUCC_REG (0x01094));
+  GpuWrite32 (GPUCC_REG (0x01094), C & ~1u);
+
+  GpuProbeLog ("  0e: enable gfx3d gate\n");
+  D = GpuRead32 (GPUCC_REG (0x01098));
+  GpuWrite32 (GPUCC_REG (0x01098), D | 1u);
+
+  GpuProbeLog ("  0f: power sequence done\n");
+  GpuProbeFlush ();
 
   /* ---- stage 1: GPUCC, the block that was always mapped ---- */
   GpuProbeLog ("stage 1: GPUCC\n");
