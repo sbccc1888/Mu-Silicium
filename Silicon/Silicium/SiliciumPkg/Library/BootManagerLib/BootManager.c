@@ -95,6 +95,83 @@ PostGopSetup (OUT EFI_GRAPHICS_OUTPUT_PROTOCOL **GopProtocol)
   *GopProtocol = LocalGopProtocol;
 }
 
+/*
+ * CHIRON_GPU_REGISTER_PROBE
+ *
+ * Reads the A540's registers from the firmware and prints them, without writing any of
+ * them. Six layers of the port agree with the MSM8998 kernel sources; this is the first
+ * thing that can disagree with the phone.
+ *
+ * Read-only on purpose. Bringing the GPU up from here, while Android's kgsl may still hold
+ * the block, is the kind of step that hangs with nothing to show for it. Reading first
+ * answers the two questions everything else rests on: are these three windows reachable at
+ * this point in the boot, and do the values look like a GPU at all.
+ *
+ * Every address below comes from the port's own headers -- ChironAdrenoA540Gpucc.h,
+ * -Gmu.h, -CpStart.h and -Smmu.h -- so a mismatch here means those headers are wrong.
+ */
+STATIC
+UINT32
+GpuRead32 (
+  IN UINT64 Address
+  )
+{
+  return *(volatile UINT32 *)(UINTN)Address;
+}
+
+STATIC
+VOID
+ChironGpuRegisterProbe (
+  VOID
+  )
+{
+  UINT64 El;
+
+  __asm__ volatile ("mrs %0, CurrentEL" : "=r" (El));
+
+  Print (L"==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
+
+  /* Identity: an A540 reports a product id in the 0x0504 range. */
+  Print (L"GPU_REVISION=%08x CHIP_ID=%08x PRODUCT_ID=%08x RBBM_STATUS=%08x\n",
+         GpuRead32 (0x05000000), GpuRead32 (0x05000004), GpuRead32 (0x05000008),
+         GpuRead32 (0x0500007C));
+
+  /* Power: bit 0 of each GDSCR is SW_COLLAPSE, set meaning the domain is down. */
+  Print (L"CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
+         GpuRead32 (0x05001004), GpuRead32 (0x05001004) & 1u,
+         GpuRead32 (0x05001094), GpuRead32 (0x05001094) & 1u);
+  Print (L"GPU_GX_BCR=%08x GX_DOMAIN=%08x\n",
+         GpuRead32 (0x05001090), GpuRead32 (0x05065130));
+
+  /* Clocks: bit 0 of a CBCR is the gate enable. */
+  Print (L"GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n",
+         GpuRead32 (0x05066098), GpuRead32 (0x05066098) & 1u,
+         GpuRead32 (0x05066020), GpuRead32 (0x05066070));
+
+  /* GMU: 0xBABEFACE in GENERAL_0 means the firmware is running. These are word offsets. */
+  Print (L"GPMU_SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n",
+         GpuRead32 (0x05000000 + 0xA8D8 * 4), GpuRead32 (0x05000000 + 0xA8E0 * 4),
+         GpuRead32 (0x05000000 + 0xA8E1 * 4), GpuRead32 (0x05000000 + 0xA8D6 * 4));
+
+  /* CP ring. */
+  Print (L"CP_RB_BASE=%08x CP_RB_CNTL=%08x CP_RPTR=%08x CP_WPTR=%08x ME_CNTL=%08x\n",
+         GpuRead32 (0x05000000 + 0x800 * 4), GpuRead32 (0x05000000 + 0x802 * 4),
+         GpuRead32 (0x05000000 + 0x806 * 4), GpuRead32 (0x05000000 + 0x807 * 4),
+         GpuRead32 (0x05000000 + 0x832 * 4));
+
+  /*
+   * SMMU context bank 0. ACTLR is the interesting one: the generic driver writes
+   * 0x70000000 there only for SMMU_MODEL_QCOM_V2, and that single register is the whole
+   * difference between qcom,smmu-v2 and a stock SMMU-500. Reading 70000000 would confirm
+   * the SMMU layer against silicon rather than against source.
+   */
+  Print (L"SMMU_CB_SCTLR=%08x (M %u) CB_ACTLR=%08x (expect 70000000) TTBR0=%08x TTBCR=%08x\n",
+         GpuRead32 (0x05048000), GpuRead32 (0x05048000) & 1u,
+         GpuRead32 (0x05048004), GpuRead32 (0x05048020), GpuRead32 (0x05048030));
+
+  Print (L"==== end of A540 GPU probe ====\n");
+}
+
 VOID
 EFIAPI
 PlatformBootManagerAfterConsole ()
@@ -110,6 +187,9 @@ PlatformBootManagerAfterConsole ()
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "%a: Failed to Display Boot Logo! Status = %r\n", __FUNCTION__, Status));
   }
+
+  // Read the GPU registers before anything else touches the block.
+  ChironGpuRegisterProbe ();
 
   // Register Key Callback
   Status = RegisterKeyCallback ((EFI_DEVICE_PATH_PROTOCOL *)&KeypadDevicePath);
