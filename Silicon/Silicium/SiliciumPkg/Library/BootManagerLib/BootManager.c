@@ -344,34 +344,61 @@ ChironGpuRegisterProbe (
    * Read everything once into locals before printing. Interleaving reads with Print calls
    * means a fault in the fourth read cannot be told apart from a hang in the third print.
    */
-  Status   = GpuRead32 (GPU_REG (0x4F5));
-  Status3  = GpuRead32 (GPU_REG (0x530));
-  Int0     = GpuRead32 (GPU_REG (0x4E1));
-  HwFault  = GpuRead32 (GPU_REG (0xB1A));
 
-  Cx       = GpuRead32 (GPUCC_REG (0x01004));
-  Gx       = GpuRead32 (GPUCC_REG (0x01094));
-  Bcr      = GpuRead32 (GPUCC_REG (0x01090));
-  Domain   = GpuRead32 (GPUCC_REG (0x00130));
-  Gate     = GpuRead32 (GPUCC_REG (0x01098));
-  Cxo      = GpuRead32 (GPUCC_REG (0x01020));
-  Rcgr     = GpuRead32 (GPUCC_REG (0x01070));
+  GpuProbeLog ("probe: reading Status\n");  Status   = GpuRead32 (GPU_REG (0x4F5));
 
-  Sysreset = GpuRead32 (GPU_REG (0xA8D8));
-  Gen0     = GpuRead32 (GPU_REG (0xA8E0));
-  Gen1     = GpuRead32 (GPU_REG (0xA8E1));
-  GpmuIntr = GpuRead32 (GPU_REG (0xA8D6));
+  GpuProbeLog ("probe: reading Status3\n");  Status3  = GpuRead32 (GPU_REG (0x530));
 
-  CpBase   = GpuRead32 (GPU_REG (0x800));
-  CpCntl   = GpuRead32 (GPU_REG (0x802));
-  CpRptr   = GpuRead32 (GPU_REG (0x806));
-  CpWptr   = GpuRead32 (GPU_REG (0x807));
-  MeCntl   = GpuRead32 (GPU_REG (0x832));
+  GpuProbeLog ("probe: reading Int0\n");  Int0     = GpuRead32 (GPU_REG (0x4E1));
+
+  GpuProbeLog ("probe: reading HwFault\n");  HwFault  = GpuRead32 (GPU_REG (0xB1A));
+
+
+  GpuProbeLog ("probe: reading Cx\n");  Cx       = GpuRead32 (GPUCC_REG (0x01004));
+
+  GpuProbeLog ("probe: reading Gx\n");  Gx       = GpuRead32 (GPUCC_REG (0x01094));
+
+  GpuProbeLog ("probe: reading Bcr\n");  Bcr      = GpuRead32 (GPUCC_REG (0x01090));
+
+  GpuProbeLog ("probe: reading Domain\n");  Domain   = GpuRead32 (GPUCC_REG (0x00130));
+
+  GpuProbeLog ("probe: reading Gate\n");  Gate     = GpuRead32 (GPUCC_REG (0x01098));
+
+  GpuProbeLog ("probe: reading Cxo\n");  Cxo      = GpuRead32 (GPUCC_REG (0x01020));
+
+  GpuProbeLog ("probe: reading Rcgr\n");  Rcgr     = GpuRead32 (GPUCC_REG (0x01070));
+
+
+  GpuProbeLog ("probe: reading Sysreset\n");  Sysreset = GpuRead32 (GPU_REG (0xA8D8));
+
+  GpuProbeLog ("probe: reading Gen0\n");  Gen0     = GpuRead32 (GPU_REG (0xA8E0));
+
+  GpuProbeLog ("probe: reading Gen1\n");  Gen1     = GpuRead32 (GPU_REG (0xA8E1));
+
+  GpuProbeLog ("probe: reading GpmuIntr\n");  GpmuIntr = GpuRead32 (GPU_REG (0xA8D6));
+
+
+  GpuProbeLog ("probe: reading CpBase\n");  CpBase   = GpuRead32 (GPU_REG (0x800));
+
+  GpuProbeLog ("probe: reading CpCntl\n");  CpCntl   = GpuRead32 (GPU_REG (0x802));
+
+  GpuProbeLog ("probe: reading CpRptr\n");  CpRptr   = GpuRead32 (GPU_REG (0x806));
+
+  GpuProbeLog ("probe: reading CpWptr\n");  CpWptr   = GpuRead32 (GPU_REG (0x807));
+
+  GpuProbeLog ("probe: reading MeCntl\n");  MeCntl   = GpuRead32 (GPU_REG (0x832));
 
   SmmuSctlr = GpuRead32 (0x05048000);
   SmmuActlr = GpuRead32 (0x05048004);
   SmmuTtbr0 = GpuRead32 (0x05048020);
   SmmuTtbcr = GpuRead32 (0x05048030);
+
+  /*
+   * Write what was read before printing any of it. The panel path goes through the UEFI
+   * console, which blits the framebuffer and is the slowest thing here; if it faults
+   * there is still a complete file.
+   */
+  GpuProbeFlush ();
 
   /* ---- now say it, on the panel and on disk ---- */
   Print (L"==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
