@@ -205,8 +205,24 @@ PlatformBootManagerUnableToBoot ()
 {
   EFI_STATUS Status;
 
-  // Nothing else to boot: hand over to the XNU loader (does not return)
-  XnuLoaderMain ();
+  /*
+   * CHIRON_NO_XNULOADER_HERE
+   *
+   * The Mi 6 and redwood ports hand over to XnuLoaderMain() at this point, and this tree carries that
+   * call.  It cannot be used on chiron: XnuLoader.h hard-codes the payload location
+   *
+   *     #define XNU_PAYLOAD_BASE     0xF0000000ULL
+   *     #define XNU_PAYLOAD_MAX_SIZE 0x04000000ULL
+   *
+   * which is redwood's, and chiron's packed image is built with --base 0x10000000.  Running it here
+   * reads a header from an address that holds nothing of the sort, so the loader either rejects it or
+   * walks memory that is not its own -- and the screen ends up blue with unreadable text, which is what
+   * was reported.
+   *
+   * On chiron the XNU loader is a separate EFI application started by NXULDR (see xnuloader/), not
+   * something this library launches from BDS.  So nothing is done here.  The fallback path below still
+   * shows the "no boot OS" graphic and shuts down cleanly.
+   */
 
   // Execute Secondary Unable To Boot
   DeviceBootManagerUnableToBoot ();
