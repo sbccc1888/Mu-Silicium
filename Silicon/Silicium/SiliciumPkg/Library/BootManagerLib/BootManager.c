@@ -124,7 +124,13 @@ GpuProbeFindLogPartition (
   UINTN                       Index;
   STATIC UINT8                Table[64 * 1024] __attribute__ ((aligned (8)));
   STATIC UINT8                Header[4096] __attribute__ ((aligned (8)));
-  CONST CHAR16                Want[] = L"logfs";
+  /*
+   * oops, not logfs. logfs is a FAT12 volume the phone's own UEFI owns, and writing raw at
+   * its LBA 0 would wreck the boot sector and the first FAT -- on every automatic run.
+   * "oops" is the raw 16 MiB panic-log area Android keeps for exactly this and never reads
+   * during a normal boot, which is why xnuloader falls back to it too.
+   */
+  CONST CHAR16                Want[] = L"oops";
 
   *OutBlockIo = NULL;
   *OutFirstLba = 0;
@@ -208,6 +214,12 @@ GpuProbeFindLogPartition (
   }
 
   FreePool (Handles);
+
+  /*
+   * No oops partition. logfs is the only other candidate and it is a live FAT12 volume; a
+   * raw write there damages firmware-owned data. Rather than do that quietly, report and
+   * write nothing -- a missing log is recoverable, a wrecked volume is not.
+   */
   return EFI_NOT_FOUND;
 }
 
@@ -258,12 +270,12 @@ GpuProbeFlush (
 
   Status = GpuProbeFindLogPartition (&Bio, &FirstLba);
   if (EFI_ERROR (Status)) {
-    Print (L"GPU probe: no logfs partition, %r\n", Status);
+    Print (L"GPU probe: no oops partition (logfs is FAT12 and is left alone), %r\n", Status);
     return;
   }
 
   Status = Bio->WriteBlocks (Bio, Bio->Media->MediaId, FirstLba, sizeof (mGpuProbeLog), mGpuProbeLog);
-  Print (L"GPU probe: log written to logfs LBA %lx, %r\n", FirstLba, Status);
+  Print (L"GPU probe: log written to oops LBA %lx, %r\n", FirstLba, Status);
 }
 /*
  * CHIRON_GPU_REGISTER_PROBE
