@@ -23,6 +23,7 @@
 
 #include "BootManager.h"
 #include "XnuLoader.h"
+#include <Protocol/BlockIo.h>
 
 //
 // Global Variables
@@ -95,6 +96,175 @@ PostGopSetup (OUT EFI_GRAPHICS_OUTPUT_PROTOCOL **GopProtocol)
   *GopProtocol = LocalGopProtocol;
 }
 
+
+/*
+ * CHIRON_GPU_PROBE_LOG
+ *
+ * The probe prints to the panel, but a photo of a panel is a poor way to read eight
+ * registers, and this port has no serial console. So the same text also goes to a raw
+ * block on the "logfs" partition, where Android can read it with dd after the reset.
+ *
+ * The GPT walk is lifted from xnuloader, where it has been reading and writing this exact
+ * partition for a while -- including the fix for a search that compared one character too
+ * many and therefore never matched. Using the same partition means the readback command is
+ * one this project already knows works:
+ *
+ *     adb shell "dd if=/dev/block/sda10 bs=4096 count=2048" > probe-log.bin
+ */
+STATIC
+EFI_STATUS
+GpuProbeFindLogPartition (
+  OUT EFI_BLOCK_IO_PROTOCOL  **OutBlockIo,
+  OUT UINT64                  *OutFirstLba
+  )
+{
+  EFI_STATUS                  Status;
+  EFI_HANDLE                 *Handles;
+  UINTN                       Count;
+  UINTN                       Index;
+  STATIC UINT8                Table[64 * 1024] __attribute__ ((aligned (8)));
+  STATIC UINT8                Header[4096] __attribute__ ((aligned (8)));
+  CONST CHAR16                Want[] = L"logfs";
+
+  *OutBlockIo = NULL;
+  *OutFirstLba = 0;
+
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiBlockIoProtocolGuid,
+                  NULL,
+                  &Count,
+                  &Handles
+                  );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  for (Index = 0; Index < Count; Index++) {
+    EFI_BLOCK_IO_PROTOCOL  *Bio;
+    UINT64                  BlockSize;
+    UINT64                  EntriesLba;
+    UINT64                  EntryCount;
+    UINT64                  EntrySize;
+    UINT64                  Bytes;
+    UINT64                  Read;
+    UINT32                  I;
+    UINT64                  E;
+
+    Status = gBS->HandleProtocol (Handles[Index], &gEfiBlockIoProtocolGuid, (VOID **)&Bio);
+    if (EFI_ERROR (Status) || (Bio == NULL) || (Bio->Media == NULL) || Bio->Media->LogicalPartition) {
+      continue;
+    }
+
+    BlockSize = Bio->Media->BlockSize;
+    if ((BlockSize < 512) || (BlockSize > 4096)) {
+      continue;
+    }
+
+    Status = Bio->ReadBlocks (Bio, Bio->Media->MediaId, 1, BlockSize, Header);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    /* "EFI PART" -- a protective MBR sits at LBA 0, the GPT header at LBA 1. */
+    if ((Header[0] != 'E') || (Header[1] != 'F') || (Header[2] != 'I') || (Header[3] != ' ')) {
+      continue;
+    }
+
+    EntriesLba = *(UINT64 *)(Header + 72);
+    I          = *(UINT32 *)(Header + 80);
+    EntryCount = I;
+    I          = *(UINT32 *)(Header + 84);
+    EntrySize  = I;
+    Bytes      = EntryCount * EntrySize;
+    if ((EntrySize < 128) || (Bytes == 0) || (Bytes > sizeof (Table))) {
+      continue;
+    }
+
+    Read   = (Bytes + BlockSize - 1) / BlockSize * BlockSize;
+    Status = Bio->ReadBlocks (Bio, Bio->Media->MediaId, EntriesLba, Read, Table);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    for (E = 0; E < EntryCount; E++) {
+      CONST UINT8   *Entry = Table + E * EntrySize;
+      CONST CHAR16  *Name  = (CONST CHAR16 *)(Entry + 56);
+      UINTN          K;
+
+      for (K = 0; (K < 36) && (Want[K] != 0); K++) {
+        if (Name[K] != Want[K]) {
+          break;
+        }
+      }
+
+      if ((Want[K] == 0) && (Name[K] == 0)) {
+        *OutFirstLba = *(UINT64 *)(Entry + 32);
+        *OutBlockIo  = Bio;
+        FreePool (Handles);
+        return EFI_SUCCESS;
+      }
+    }
+  }
+
+  FreePool (Handles);
+  return EFI_NOT_FOUND;
+}
+
+STATIC
+UINT8  mGpuProbeLog[4096] __attribute__ ((aligned (4096)));
+STATIC UINTN  mGpuProbeLogLen;
+
+STATIC
+VOID
+GpuProbeLog (
+  IN CONST CHAR8  *Format,
+  ...
+  )
+{
+  VA_LIST  Args;
+  UINTN    Remaining;
+
+  // AsciiVSPrint, not UnicodeVSPrintAsciiFormat: the buffer is bytes, and the "Unicode"
+  // in that name refers to the destination type, not the source. Mismatching them is what
+  // two build failures in a row were about.
+  VA_START (Args, Format);
+  Remaining = sizeof (mGpuProbeLog) - mGpuProbeLogLen;
+  if (Remaining > 2) {
+    mGpuProbeLogLen += AsciiVSPrint (
+                         (CHAR8 *)mGpuProbeLog + mGpuProbeLogLen,
+                         Remaining,
+                         Format,
+                         Args
+                         );
+  }
+
+  VA_END (Args);
+}
+
+STATIC
+VOID
+GpuProbeFlush (
+  VOID
+  )
+{
+  EFI_BLOCK_IO_PROTOCOL  *Bio;
+  UINT64                  FirstLba;
+  EFI_STATUS              Status;
+
+  if (mGpuProbeLogLen == 0) {
+    return;
+  }
+
+  Status = GpuProbeFindLogPartition (&Bio, &FirstLba);
+  if (EFI_ERROR (Status)) {
+    Print (L"GPU probe: no logfs partition, %r\n", Status);
+    return;
+  }
+
+  Status = Bio->WriteBlocks (Bio, Bio->Media->MediaId, FirstLba, sizeof (mGpuProbeLog), mGpuProbeLog);
+  Print (L"GPU probe: log written to logfs LBA %lx, %r\n", FirstLba, Status);
+}
 /*
  * CHIRON_GPU_REGISTER_PROBE
  *
@@ -130,34 +300,41 @@ ChironGpuRegisterProbe (
   __asm__ volatile ("mrs %0, CurrentEL" : "=r" (El));
 
   Print (L"==== A540 GPU probe (read only), CurrentEL=%lx ====\n", El);
+  GpuProbeLog ("==== A540 GPU probe (read only), CurrentEL=%lx ====\n");
 
   /* Identity: an A540 reports a product id in the 0x0504 range. */
   Print (L"GPU_REVISION=%08x CHIP_ID=%08x PRODUCT_ID=%08x RBBM_STATUS=%08x\n",
          GpuRead32 (0x05000000), GpuRead32 (0x05000004), GpuRead32 (0x05000008),
          GpuRead32 (0x0500007C));
+  GpuProbeLog ("GPU_REVISION=%08x CHIP_ID=%08x PRODUCT_ID=%08x RBBM_STATUS=%08x\n");
 
   /* Power: bit 0 of each GDSCR is SW_COLLAPSE, set meaning the domain is down. */
   Print (L"CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n",
          GpuRead32 (0x05001004), GpuRead32 (0x05001004) & 1u,
          GpuRead32 (0x05001094), GpuRead32 (0x05001094) & 1u);
+  GpuProbeLog ("CX_GDSCR=%08x (collapse %u) GX_GDSCR=%08x (collapse %u)\n");
   Print (L"GPU_GX_BCR=%08x GX_DOMAIN=%08x\n",
          GpuRead32 (0x05001090), GpuRead32 (0x05065130));
+  GpuProbeLog ("GPU_GX_BCR=%08x GX_DOMAIN=%08x\n");
 
   /* Clocks: bit 0 of a CBCR is the gate enable. */
   Print (L"GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n",
          GpuRead32 (0x05066098), GpuRead32 (0x05066098) & 1u,
          GpuRead32 (0x05066020), GpuRead32 (0x05066070));
+  GpuProbeLog ("GFX3D_CBCR=%08x (on %u) CXO_CBCR=%08x GFX3D_RCGR=%08x\n");
 
   /* GMU: 0xBABEFACE in GENERAL_0 means the firmware is running. These are word offsets. */
   Print (L"GPMU_SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n",
          GpuRead32 (0x05000000 + 0xA8D8 * 4), GpuRead32 (0x05000000 + 0xA8E0 * 4),
          GpuRead32 (0x05000000 + 0xA8E1 * 4), GpuRead32 (0x05000000 + 0xA8D6 * 4));
+  GpuProbeLog ("GPMU_SYSRESET=%08x GENERAL_0=%08x GENERAL_1=%08x RBBM_INTR=%08x\n");
 
   /* CP ring. */
   Print (L"CP_RB_BASE=%08x CP_RB_CNTL=%08x CP_RPTR=%08x CP_WPTR=%08x ME_CNTL=%08x\n",
          GpuRead32 (0x05000000 + 0x800 * 4), GpuRead32 (0x05000000 + 0x802 * 4),
          GpuRead32 (0x05000000 + 0x806 * 4), GpuRead32 (0x05000000 + 0x807 * 4),
          GpuRead32 (0x05000000 + 0x832 * 4));
+  GpuProbeLog ("CP_RB_BASE=%08x CP_RB_CNTL=%08x CP_RPTR=%08x CP_WPTR=%08x ME_CNTL=%08x\n");
 
   /*
    * SMMU context bank 0. ACTLR is the interesting one: the generic driver writes
@@ -168,8 +345,12 @@ ChironGpuRegisterProbe (
   Print (L"SMMU_CB_SCTLR=%08x (M %u) CB_ACTLR=%08x (expect 70000000) TTBR0=%08x TTBCR=%08x\n",
          GpuRead32 (0x05048000), GpuRead32 (0x05048000) & 1u,
          GpuRead32 (0x05048004), GpuRead32 (0x05048020), GpuRead32 (0x05048030));
+  GpuProbeLog ("SMMU_CB_SCTLR=%08x (M %u) CB_ACTLR=%08x (expect 70000000) TTBR0=%08x TTBCR=%08x\n");
 
   Print (L"==== end of A540 GPU probe ====\n");
+  GpuProbeLog ("==== end of A540 GPU probe ====\n");
+  GpuProbeFlush ();
+  GpuProbeLog ("==== end of A540 GPU probe ====\n");
 }
 
 VOID
@@ -314,13 +495,30 @@ PlatformBootManagerUnableToBoot ()
     Print (L"No Operating System Found! Please make sure that an OS is Installed.\n");
   }
 
-  // Wait 10s
-  gBS->Stall (10000000);
+  /*
+   * CHIRON_REBOOT_INSTEAD_OF_SHUT_DOWN
+   *
+   * This used to stall ten seconds and then call ResetSystem(EfiResetShutdown), which on
+   * chiron leaves the phone off and needing a physical press of the power button. Every
+   * diagnostic run then cost a manual intervention, and worse, the panel went dark before
+   * anything on it could be read.
+   *
+   * A cold reboot gets back to Android on its own, so a probe can be flashed, read, and
+   * the phone is usable again without anyone touching it. EfiResetCold is asked for first;
+   * if the platform refuses it the warm reset is tried, because on this port warm has been
+   * the one that works and there is no reason to end in a dead loop if either succeeds.
+   *
+   * The stall stays, but shorter: long enough to read the panel, not long enough to make a
+   * test cycle tedious.
+   */
+  gBS->Stall (5000000);
 
-  // Shutdown
-  gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+  gRT->ResetSystem (EfiResetCold, EFI_SUCCESS, 0, NULL);
+  gRT->ResetSystem (EfiResetWarm, EFI_SUCCESS, 0, NULL);
 
-  // Do Cpu Dead Loop
+  // Neither reset returned, which should not happen. Fall through rather than hang
+  // silently, so the dead loop is at least preceded by something on the panel.
+  Print (L"Reset did not take effect; halting.\n");
   CpuDeadLoop ();
 }
 
